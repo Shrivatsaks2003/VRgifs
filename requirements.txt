@@ -1,0 +1,6 @@
+opencv-python
+pyzbar
+Pillow
+numpy
+qrcode[pil]
+requests
