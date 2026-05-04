@@ -12,6 +12,7 @@ remote GIF URL, and overlays the animation into a side-by-side VR layout.
 - Position smoothing to reduce jitter
 - Short persistence window so the GIF stays visible after the QR code drops out
 - Local asset GIFs and remote URL GIFs
+- On-device caching for remote GIFs so previously scanned QR content reloads faster
 - Torch toggle and camera switching
 
 ## Local GIF assets
@@ -41,6 +42,6 @@ flutter run
 ## Notes
 
 - Camera permission is required on Android and iOS.
-- Remote GIFs are loaded directly from their URLs instead of being cached to a
-  project folder like the Python version.
+- Remote GIFs are downloaded into the app cache on first scan and then reused
+  locally on later scans for faster loading.
 - The scanner is configured for QR codes only, matching the original workflow.

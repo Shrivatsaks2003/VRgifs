@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() {
@@ -46,7 +45,7 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
 
   final MobileScannerController _scannerController = MobileScannerController(
     autoStart: true,
-    autoZoom: true,
+    autoZoom: false,
     cameraResolution: const Size(640, 480),
     detectionSpeed: DetectionSpeed.normal,
     detectionTimeoutMs: 150,
@@ -55,7 +54,7 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
   );
 
   Timer? _persistenceTicker;
-  _GifSource? _activeGif;
+  _ResolvedGif? _activeGif;
   Rect? _rawBarcodeRect;
   Size _captureSize = Size.zero;
   DateTime? _persistUntil;
@@ -116,14 +115,31 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
     }
 
     final String detectedValue = selectedBarcode.rawValue!.trim();
-    final int generation = ++_scanGeneration;
-    final _GifSource? resolvedGif = await _resolveGifSource(detectedValue);
+    final Rect? newRect = _rectFromCorners(selectedBarcode.corners);
 
-    if (!mounted || generation != _scanGeneration || resolvedGif == null) {
+    if (detectedValue == _lastDetectedValue && _activeGif != null) {
+      setState(() {
+        _captureSize = capture.size;
+        _rawBarcodeRect = _smoothRect(_rawBarcodeRect, newRect);
+        _persistUntil = DateTime.now().add(_persistenceWindow);
+        _statusText = 'SIGNAL_LOCKED';
+      });
       return;
     }
 
-    final Rect? newRect = _rectFromCorners(selectedBarcode.corners);
+    final int generation = ++_scanGeneration;
+    final _ResolvedGif? resolvedGif = await _resolveGifSource(detectedValue);
+
+    if (!mounted || generation != _scanGeneration) {
+      return;
+    }
+
+    if (resolvedGif == null) {
+      setState(() {
+        _statusText = 'GIF_LOAD_FAILED';
+      });
+      return;
+    }
 
     setState(() {
       _activeGif = resolvedGif;
@@ -135,11 +151,13 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
     });
   }
 
-  Future<_GifSource?> _resolveGifSource(String qrValue) async {
+  Future<_ResolvedGif?> _resolveGifSource(String qrValue) async {
     final Uri? uri = Uri.tryParse(qrValue);
     if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
-      final bool reachable = await _urlLooksReachable(uri);
-      return reachable ? _GifSource.network(uri.toString()) : null;
+      return _ResolvedGif.network(
+        uri.toString(),
+        debugLabel: uri.toString(),
+      );
     }
 
     final List<String> candidates = <String>[
@@ -150,27 +168,16 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
     for (final candidate in candidates) {
       try {
         await rootBundle.load(candidate);
-        return _GifSource.asset(candidate);
+        return _ResolvedGif.asset(
+          candidate,
+          debugLabel: candidate,
+        );
       } on FlutterError {
         continue;
       }
     }
 
     return null;
-  }
-
-  Future<bool> _urlLooksReachable(Uri uri) async {
-    try {
-      final response = await http
-          .head(uri, headers: const {'Accept': 'image/gif'})
-          .timeout(const Duration(seconds: 5));
-      if (response.statusCode >= 200 && response.statusCode < 400) {
-        return true;
-      }
-    } catch (_) {
-      // Fall back to allowing the URL to load in the widget itself.
-    }
-    return true;
   }
 
   Rect? _rectFromCorners(List<Offset> corners) {
@@ -238,35 +245,21 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
             children: [
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final Size eyeSize = Size(
-                    constraints.maxWidth / 2,
+                  final Size viewportSize = Size(
+                    constraints.maxWidth,
                     constraints.maxHeight,
                   );
                   final Rect? overlayRect = _mapRectToViewport(
                     rawRect: _rawBarcodeRect,
                     captureSize: _captureSize,
-                    viewportSize: eyeSize,
+                    viewportSize: viewportSize,
                   );
 
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: _EyePanel(
-                          controller: _scannerController,
-                          gif: _activeGif,
-                          overlayRect: overlayRect,
-                          onDetect: _handleDetect,
-                        ),
-                      ),
-                      Expanded(
-                        child: _EyePanel(
-                          controller: _scannerController,
-                          gif: _activeGif,
-                          overlayRect: overlayRect,
-                          onDetect: _handleDetect,
-                        ),
-                      ),
-                    ],
+                  return _ViewerPanel(
+                    controller: _scannerController,
+                    gif: _activeGif,
+                    overlayRect: overlayRect,
+                    onDetect: _handleDetect,
                   );
                 },
               ),
@@ -329,7 +322,7 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
 
     final double widthScale = viewportSize.width / captureSize.width;
     final double heightScale = viewportSize.height / captureSize.height;
-    final double scale = math.max(widthScale, heightScale);
+    final double scale = math.min(widthScale, heightScale);
 
     final double scaledWidth = captureSize.width * scale;
     final double scaledHeight = captureSize.height * scale;
@@ -351,8 +344,8 @@ class _VrGifViewerPageState extends State<VrGifViewerPage> {
   }
 }
 
-class _EyePanel extends StatelessWidget {
-  const _EyePanel({
+class _ViewerPanel extends StatelessWidget {
+  const _ViewerPanel({
     required this.controller,
     required this.gif,
     required this.overlayRect,
@@ -360,7 +353,7 @@ class _EyePanel extends StatelessWidget {
   });
 
   final MobileScannerController controller;
-  final _GifSource? gif;
+  final _ResolvedGif? gif;
   final Rect? overlayRect;
   final ValueChanged<BarcodeCapture> onDetect;
 
@@ -374,7 +367,7 @@ class _EyePanel extends StatelessWidget {
           children: [
             MobileScanner(
               controller: controller,
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
               onDetect: onDetect,
               tapToFocus: true,
               errorBuilder: (context, error) {
@@ -408,7 +401,7 @@ class _EyePanel extends StatelessWidget {
 class _GifOverlay extends StatelessWidget {
   const _GifOverlay({required this.gif});
 
-  final _GifSource gif;
+  final _ResolvedGif gif;
 
   @override
   Widget build(BuildContext context) {
@@ -429,36 +422,33 @@ class _GifOverlay extends StatelessWidget {
         borderRadius: borderRadius,
         child: ColoredBox(
           color: Colors.transparent,
-          child: gif.when(
-            asset: (assetPath) => Image.asset(
-              assetPath,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-            ),
-            network: (url) => Image.network(
-              url,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              errorBuilder: (context, error, stackTrace) {
-                return const ColoredBox(
-                  color: Color(0x22000000),
-                  child: Center(
-                    child: Icon(Icons.gif_box_outlined, color: Colors.white70),
-                  ),
-                );
-              },
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) {
-                  return child;
-                }
-                return const ColoredBox(
-                  color: Color(0x22000000),
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                );
-              },
-            ),
-          ),
+          child: gif.isAsset
+              ? Image.asset(
+                  gif.value,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: _buildGifError,
+                )
+              : Image.network(
+                  gif.value,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: _buildGifError,
+                ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildGifError(
+    BuildContext context,
+    Object error,
+    StackTrace? stackTrace,
+  ) {
+    return const ColoredBox(
+      color: Color(0x22000000),
+      child: Center(
+        child: Icon(Icons.gif_box_outlined, color: Colors.white70),
       ),
     );
   }
@@ -551,60 +541,94 @@ class _VrHudPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
 
-    final double dividerX = size.width / 2;
-    canvas.drawLine(Offset(dividerX, 0), Offset(dividerX, size.height), cyan);
+    final Offset center = Offset(size.width / 2, size.height / 2);
+    canvas.drawLine(
+      Offset(center.dx - 18, center.dy),
+      Offset(center.dx - 6, center.dy),
+      cyan,
+    );
+    canvas.drawLine(
+      Offset(center.dx + 6, center.dy),
+      Offset(center.dx + 18, center.dy),
+      cyan,
+    );
+    canvas.drawLine(
+      Offset(center.dx, center.dy - 18),
+      Offset(center.dx, center.dy - 6),
+      cyan,
+    );
+    canvas.drawLine(
+      Offset(center.dx, center.dy + 6),
+      Offset(center.dx, center.dy + 18),
+      cyan,
+    );
 
-    for (final double centerX in <double>[size.width * 0.25, size.width * 0.75]) {
-      final Offset center = Offset(centerX, size.height / 2);
-      canvas.drawLine(
-        Offset(center.dx - 18, center.dy),
-        Offset(center.dx - 6, center.dy),
-        cyan,
-      );
-      canvas.drawLine(
-        Offset(center.dx + 6, center.dy),
-        Offset(center.dx + 18, center.dy),
-        cyan,
-      );
-      canvas.drawLine(
-        Offset(center.dx, center.dy - 18),
-        Offset(center.dx, center.dy - 6),
-        cyan,
-      );
-      canvas.drawLine(
-        Offset(center.dx, center.dy + 6),
-        Offset(center.dx, center.dy + 18),
-        cyan,
-      );
-    }
+    final Rect frame = Rect.fromLTWH(22, 22, size.width - 44, size.height - 44);
+    const double corner = 26;
+    canvas.drawLine(frame.topLeft, frame.topLeft + const Offset(corner, 0), cyan);
+    canvas.drawLine(frame.topLeft, frame.topLeft + const Offset(0, corner), cyan);
+    canvas.drawLine(
+      frame.topRight,
+      frame.topRight + const Offset(-corner, 0),
+      cyan,
+    );
+    canvas.drawLine(
+      frame.topRight,
+      frame.topRight + const Offset(0, corner),
+      cyan,
+    );
+    canvas.drawLine(
+      frame.bottomLeft,
+      frame.bottomLeft + const Offset(corner, 0),
+      cyan,
+    );
+    canvas.drawLine(
+      frame.bottomLeft,
+      frame.bottomLeft + const Offset(0, -corner),
+      cyan,
+    );
+    canvas.drawLine(
+      frame.bottomRight,
+      frame.bottomRight + const Offset(-corner, 0),
+      cyan,
+    );
+    canvas.drawLine(
+      frame.bottomRight,
+      frame.bottomRight + const Offset(0, -corner),
+      cyan,
+    );
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _GifSource {
-  const _GifSource._({
-    required this.assetPath,
-    required this.networkUrl,
+class _ResolvedGif {
+  const _ResolvedGif._({
+    required this.value,
+    required this.isAsset,
+    required this.debugLabel,
   });
 
-  const _GifSource.asset(String path)
-      : this._(assetPath: path, networkUrl: null);
+  const _ResolvedGif.asset(
+    String assetPath, {
+    required String debugLabel,
+  }) : this._(
+         value: assetPath,
+         isAsset: true,
+         debugLabel: debugLabel,
+       );
 
-  const _GifSource.network(String url)
-      : this._(assetPath: null, networkUrl: url);
+  const _ResolvedGif.network(
+    String url, {
+    required String debugLabel,
+  }) : this._(
+         value: url,
+         isAsset: false,
+         debugLabel: debugLabel,
+       );
 
-  final String? assetPath;
-  final String? networkUrl;
-
-  T when<T>({
-    required T Function(String assetPath) asset,
-    required T Function(String networkUrl) network,
-  }) {
-    if (assetPath != null) {
-      return asset(assetPath!);
-    }
-    return network(networkUrl!);
-  }
+  final String value;
+  final bool isAsset;
+  final String debugLabel;
 }
