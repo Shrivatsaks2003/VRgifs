@@ -1,72 +1,65 @@
-# VR GIF Viewer (SBS)
+# VR GIF Viewer (Flutter)
 
-A Python-based virtual reality application that brings digital content into the physical world via QR codes. This tool scans QR codes through a webcam and overlays associated GIF animations onto the real-world view in a Side-by-Side (SBS) format, optimized for VR headsets.
+A Flutter VR GIF viewer built around an offline-first flow. GIFs can be shared
+into the app from the Android share sheet, copied into app-local storage, and
+assigned a QR code that resolves to that locally stored GIF ID.
 
-## 🚀 Features
+## Features
 
-- **Real-time QR Detection**: Uses `pyzbar` for high-speed QR code scanning.
-- **SBS VR Rendering**: Side-by-Side output for compatibility with mobile VR headsets (Google Cardboard, etc.).
-- **Dynamic Content Loading**:
-  - **Local Assets**: Loads GIFs from the `assets/` directory.
-  - **Remote URLs**: Automatically downloads and caches GIFs from URLs encoded in QR codes.
-- **Smart Persistence**: GIFs remain visible for a short period even if the QR code leaves the camera's field of view.
-- **Holographic Aesthetics**: Smooth alpha blending for transparent GIFs.
-- **Jitter Reduction**: Position smoothing algorithms for a stable viewing experience.
-- **Digital Zoom**: Enhanced detection capabilities for distant QR codes.
+- Real-time QR scanning with `mobile_scanner`
+- Android native GIF input box for direct keyboard GIF insertion
+- Android share-target flow for GIFs coming from the share sheet of other apps
+- App-local GIF persistence in the application documents directory
+- In-app QR generation for locally stored GIF IDs
+- Side-by-side stereoscopic layout for mobile VR viewers
+- GIF overlay placement based on the detected QR code bounds
+- Position smoothing to reduce jitter
+- Short persistence window so the GIF stays visible after the QR code drops out
+- Bundled asset GIF fallback
+- Torch toggle and camera switching
 
-## 🛠️ Prerequisites
+## Offline flow
 
-- Python 3.8+
-- A webcam
-- A VR headset (for the SBS effect)
-- ZBar library (required for `pyzbar`)
-  - **Linux**: `sudo apt-get install libzbar0`
-  - **macOS**: `brew install zbar`
-  - **Windows**: Included in the `pyzbar` wheel.
+1. On Android, open the `Library + QR` tab and tap the native keyboard GIF input box.
+2. Send a GIF from the keyboard, or share a GIF into the app from another Android app.
+3. The app copies that GIF into its local documents directory.
+4. The app generates a QR payload like `vrgif://local/<gif-id>`.
+5. Scanning that QR loads the matching local GIF if it exists on the device.
 
-## 📦 Installation
+Important: a QR code only carries the local GIF identifier, not the full GIF
+binary. Another device will need the same GIF stored in its app memory for the
+QR to resolve offline.
 
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd VRgifs
-   ```
+## Bundled asset GIFs
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+Put local GIF files inside `assets/` and encode the filename in the QR code.
 
-## 🎮 Usage
+Examples:
 
-1. **Prepare your QR Codes**:
-   - Create a QR code containing either a filename (e.g., `cat.gif`) or a direct link to a GIF (e.g., `https://example.com/dance.gif`).
-   - If using local files, place them in an `assets/` folder in the project root.
+- `cat.gif`
+- `holograms/orb.gif`
 
-2. **Run the application**:
-   ```bash
-   python main.py
-   ```
+The app tries both the QR value itself and `assets/<qr-value>`.
 
-3. **View in VR**:
-   - Mount your phone/screen in your VR headset.
-   - Point the camera at a QR code to trigger the GIF overlay.
-   - Press **'q'** to exit the application.
+## Run
 
-## 🏗️ Project Structure
+```bash
+flutter pub get
+flutter run
+```
 
-- `main.py`: The core engine handling camera feed, QR detection, and SBS rendering.
-- `gif_handler.py`: Manages GIF loading, frame extraction, and animation loops.
-- `requirements.txt`: Python package dependencies.
-- `cache/`: (Auto-generated) Stores downloaded remote GIFs.
+## Project structure
 
-## 🧪 How it Works
+- `lib/main.dart`: main Flutter app and VR viewer screen
+- `assets/`: bundled local GIF files
+- `android/`, `ios/`, `web/`: generated Flutter platform runners
 
-1. **Capture**: The app grabs frames from the webcam.
-2. **Detection**: It scans for QR codes. If none are found, it applies a central "digital zoom" to help pick up distant codes.
-3. **Processing**: Once a code is found, the app determines if it's a local file or a URL.
-4. **Rendering**: The GIF frames are extracted using `Pillow`, converted for `OpenCV`, and alpha-blended onto the camera frame at the QR code's location.
-5. **VR Output**: The final frame is duplicated and resized into a Side-by-Side format for stereoscopic viewing.
+## Notes
 
----
-*Created with ❤️ for the VR community.*
+- Camera permission is required on Android and iOS.
+- Imported GIFs are stored in the app documents folder on the phone.
+- On Android, the app can receive a shared GIF directly from another app.
+- The app now also exposes a focused native rich-content text editor so keyboards
+  such as Gboard can commit GIF content directly into the app.
+- Remote URL resolution has been removed from the scanner flow.
+- The scanner is configured for QR codes only, matching the original workflow.
